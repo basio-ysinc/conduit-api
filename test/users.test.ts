@@ -12,7 +12,7 @@ const newUser = {
   password: "password123",
 };
 
-async function register(a: ReturnType<typeof app>, user = newUser) {
+async function register(a: ReturnType<typeof app>, user: Record<string, unknown> = newUser) {
   return a.request("/api/users", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -46,6 +46,13 @@ describe("POST /api/users", () => {
       const body = await res.json();
       expect(body.errors[field][0]).toBe("can't be blank");
     }
+  });
+
+  it("型が違うフィールドは 422 を返し、blank とは別のメッセージを返す", async () => {
+    const res = await register(app(), { ...newUser, email: 123 });
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.errors.email[0]).not.toBe("can't be blank");
   });
 
   it("8 文字未満の password は 422 を返す", async () => {
