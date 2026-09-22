@@ -8,3 +8,4 @@ errors_articles.hurl
 profiles.hurl
 errors_profiles.hurl
 pagination.hurl
+feed.hurl

@@ -215,22 +215,67 @@ describe("favorited / favoritesCount の反映", () => {
 });
 
 describe("GET /api/articles/feed", () => {
+  const authed = (a: ReturnType<typeof app>, token: string, query = "") =>
+    a.request(`/api/articles/feed${query}`, {
+      headers: { Authorization: `Token ${token}` },
+    });
+  const follow = (a: ReturnType<typeof app>, token: string, username: string) =>
+    a.request(`/api/profiles/${username}/follow`, {
+      method: "POST",
+      headers: { Authorization: `Token ${token}` },
+    });
+  const user = (username: string) => ({
+    username,
+    email: `${username}@test.com`,
+    password: "password123",
+  });
+
   it("未認証は 401 errors.token を返す", async () => {
     const res = await app().request("/api/articles/feed");
     expect(res.status).toBe(401);
     expect((await res.json()).errors.token[0]).toBe("is missing");
   });
 
-  it("認証済みはフォロー中ユーザーの記事一覧を返す(follows 未導入なら空)", async () => {
+  it("フォロー中ユーザーの記事だけを作成日時の降順で返し、body は含まない", async () => {
     const a = app();
-    const token = await register(a);
-    await createArticle(a, token);
-    const res = await a.request("/api/articles/feed", {
-      headers: { Authorization: `Token ${token}` },
-    });
-    expect(res.status).toBe(200);
-    const body = await res.json();
+    const main = await register(a);
+    const celeb = await register(a, user("celeb"));
+    const other = await register(a, user("other"));
+    const slug1 = await createArticle(a, celeb, { ...newArticle, title: "c1" });
+    const slug2 = await createArticle(a, celeb, { ...newArticle, title: "c2" });
+    await createArticle(a, other, { ...newArticle, title: "not followed" });
+    // 自分の記事はフォローしていないので feed に出ない
+    await createArticle(a, main, { ...newArticle, title: "mine" });
+
+    let body = await (await authed(a, main)).json();
     expect(body.articles).toEqual([]);
     expect(body.articlesCount).toBe(0);
+
+    await follow(a, main, "celeb");
+    const res = await authed(a, main);
+    expect(res.status).toBe(200);
+    body = await res.json();
+    expect(body.articlesCount).toBe(2);
+    expect(body.articles.map((x: { slug: string }) => x.slug)).toEqual([slug2, slug1]);
+    expect(body.articles[0].body).toBeUndefined();
+    expect(body.articles[0].author).toMatchObject({ username: "celeb", following: true });
+  });
+
+  it("limit / offset は一覧と同じ規則(既定 20、範囲外は 422)", async () => {
+    const a = app();
+    const main = await register(a);
+    const celeb = await register(a, user("celeb"));
+    await follow(a, main, "celeb");
+    for (const title of ["p1", "p2", "p3"]) {
+      await createArticle(a, celeb, { ...newArticle, title });
+    }
+
+    const page = await (await authed(a, main, "?limit=2&offset=1")).json();
+    expect(page.articlesCount).toBe(3);
+    expect(page.articles.map((x: { title: string }) => x.title)).toEqual(["p2", "p1"]);
+
+    for (const q of ["limit=0", "limit=101", "offset=-1", "limit=abc"]) {
+      expect((await authed(a, main, `?${q}`)).status).toBe(422);
+    }
   });
 });

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { Db } from "../db/index.js";
 import { favoritesCount, isFavorited } from "./favorites.js";
+import { isFollowing } from "./profiles.js";
 import type { UserRow } from "./users.js";
 
 export type ArticleRow = {
@@ -135,6 +136,21 @@ export function listArticles(
   return { rows, count };
 }
 
+/** follower がフォロー中のユーザーの記事を作成日時の降順で返す。count は limit/offset 適用前の総件数。 */
+export function listFeedArticles(
+  db: Db,
+  followerId: number,
+  query: { limit: number; offset: number },
+): { rows: ArticleRow[]; count: number } {
+  const cond =
+    "FROM articles a WHERE a.author_id IN (SELECT followee_id FROM follows WHERE follower_id = ?)";
+  const count = (db.prepare(`SELECT COUNT(*) AS c ${cond}`).get(followerId) as { c: number }).c;
+  const rows = db
+    .prepare(`SELECT a.* ${cond} ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?`)
+    .all(followerId, query.limit, query.offset) as ArticleRow[];
+  return { rows, count };
+}
+
 /** タグ名の配列で記事のタグを張り替える。記事内の並び順を position に保持する。 */
 function replaceTags(db: Db, articleId: number, tagList: string[]): void {
   const names = [...new Set(tagList)];
@@ -162,13 +178,13 @@ function tagNames(db: Db, articleId: number): string[] {
 
 type Profile = { username: string; bio: string | null; image: string | null; following: boolean };
 
-// follows 機能(A6 以降)が入るまで following は常に false
-function profileResponse(author: UserRow): Profile {
+// following は viewer 基準。未認証なら false
+function profileResponse(db: Db, author: UserRow, viewer?: UserRow): Profile {
   return {
     username: author.username,
     bio: author.bio,
     image: author.image,
-    following: false,
+    following: viewer !== undefined && isFollowing(db, viewer.id, author.id),
   };
 }
 
@@ -192,6 +208,6 @@ export function articleResponse(
     updatedAt: row.updated_at,
     favorited: viewer !== undefined && isFavorited(db, viewer.id, row.id),
     favoritesCount: favoritesCount(db, row.id),
-    author: profileResponse(author),
+    author: profileResponse(db, author, viewer),
   };
 }
