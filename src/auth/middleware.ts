@@ -1,5 +1,5 @@
 import { createMiddleware } from "hono/factory";
-import type { AppEnv } from "../app.js";
+import type { AppEnv, OptionalAuthEnv } from "../app.js";
 import { findUserById } from "../services/users.js";
 import { verifyToken } from "./jwt.js";
 
@@ -23,7 +23,7 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
  * 任意認証版。ヘッダが無ければ匿名のまま通し、有効なトークンがあれば c.var.user に載せる。
  * Token 形式でない/不正・期限切れ・ユーザー不存在のトークンが送られた場合のみ 401。
  */
-export const optionalAuth = createMiddleware<AppEnv>(async (c, next) => {
+export const optionalAuth = createMiddleware<OptionalAuthEnv>(async (c, next) => {
   const header = c.req.header("Authorization");
   const token = header?.startsWith("Token ") ? header.slice("Token ".length) : undefined;
   if (!token) return next();

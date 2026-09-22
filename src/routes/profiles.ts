@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import type { AppEnv } from "../app.js";
+import type { AppEnv, OptionalAuthEnv } from "../app.js";
 import { optionalAuth, requireAuth } from "../auth/middleware.js";
 import {
   findUserByUsername,
@@ -8,22 +8,23 @@ import {
   profileResponse,
   unfollowUser,
 } from "../services/profiles.js";
-import type { UserRow } from "../services/users.js";
 
-export const profilesRoutes = new Hono<AppEnv>();
+export const profilesRoutes = new Hono<OptionalAuthEnv>();
 
 profilesRoutes.get("/api/profiles/:username", optionalAuth, (c) => {
   const db = c.get("db");
   const target = findUserByUsername(db, c.req.param("username"));
   if (!target) return c.json({ errors: { profile: ["not found"] } }, 404);
-  const viewer: UserRow | undefined = c.get("user");
+  const viewer = c.get("user");
   const following = viewer !== undefined && isFollowing(db, viewer.id, target.id);
   return c.json({ profile: profileResponse(target, following) });
 });
 
-profilesRoutes.use("/api/profiles/:username/follow", requireAuth);
+export const profileFollowRoutes = new Hono<AppEnv>();
 
-profilesRoutes.post("/api/profiles/:username/follow", (c) => {
+profileFollowRoutes.use("/api/profiles/:username/follow", requireAuth);
+
+profileFollowRoutes.post("/api/profiles/:username/follow", (c) => {
   const db = c.get("db");
   const target = findUserByUsername(db, c.req.param("username"));
   if (!target) return c.json({ errors: { profile: ["not found"] } }, 404);
@@ -35,7 +36,7 @@ profilesRoutes.post("/api/profiles/:username/follow", (c) => {
   return c.json({ profile: profileResponse(target, isFollowing(db, viewer.id, target.id)) });
 });
 
-profilesRoutes.delete("/api/profiles/:username/follow", (c) => {
+profileFollowRoutes.delete("/api/profiles/:username/follow", (c) => {
   const db = c.get("db");
   const target = findUserByUsername(db, c.req.param("username"));
   if (!target) return c.json({ errors: { profile: ["not found"] } }, 404);
