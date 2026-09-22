@@ -183,6 +183,35 @@ describe("favorited / favoritesCount の反映", () => {
     expect(none.articlesCount).toBe(0);
     expect(none.articles).toEqual([]);
   });
+
+  it("GET /api/articles 一覧も認証ユーザーの favorited を返す", async () => {
+    const a = app();
+    const token = await register(a);
+    const other = await register(a, {
+      username: "bob",
+      email: "bob@test.com",
+      password: "password123",
+    });
+    const slug = await createArticle(a, token);
+    await favorite(a, slug, token);
+
+    const mine = await (
+      await a.request("/api/articles", {
+        headers: { Authorization: `Token ${token}` },
+      })
+    ).json();
+    expect(mine.articles[0].slug).toBe(slug);
+    expect(mine.articles[0].favorited).toBe(true);
+    expect(mine.articles[0].favoritesCount).toBe(1);
+
+    const theirs = await (
+      await a.request("/api/articles", {
+        headers: { Authorization: `Token ${other}` },
+      })
+    ).json();
+    expect(theirs.articles[0].favorited).toBe(false);
+    expect(theirs.articles[0].favoritesCount).toBe(1);
+  });
 });
 
 describe("GET /api/articles/feed", () => {
