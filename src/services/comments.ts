@@ -31,14 +31,19 @@ export function findCommentById(db: Db, id: number): CommentRow | null {
 }
 
 /** 記事に紐づくコメントを作者情報つきで返す(作成順)。 */
-export function listComments(db: Db, articleId: number): CommentWithAuthor[] {
+export function listComments(
+  db: Db,
+  articleId: number,
+  limit: number,
+  offset: number,
+): CommentWithAuthor[] {
   return db
     .prepare(
       `SELECT c.*, u.username AS author_username, u.bio AS author_bio, u.image AS author_image
        FROM comments c JOIN users u ON u.id = c.author_id
-       WHERE c.article_id = ? ORDER BY c.id`,
+       WHERE c.article_id = ? ORDER BY c.id LIMIT ? OFFSET ?`,
     )
-    .all(articleId) as CommentWithAuthor[];
+    .all(articleId, limit, offset) as CommentWithAuthor[];
 }
 
 export function deleteComment(db: Db, comment: CommentRow): void {

@@ -16,6 +16,12 @@ const createSchema = z.object({
   comment: z.object({ body: z.string().refine((s) => s.trim().length > 0) }),
 });
 
+// decisions.md TBD-2: limit は 1..100(既定 20)、offset は 0 以上(既定 0)。範囲外は 422。
+const listQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
 export const commentsRoutes = new Hono<AppEnv>();
 
 // 認証は任意。記事が無ければ 404。
@@ -23,7 +29,11 @@ commentsRoutes.get("/:slug/comments", (c) => {
   const db = c.get("db");
   const article = getArticleBySlug(db, c.req.param("slug"));
   if (!article) return fail(c, 404, "article", "not found");
-  const comments = listComments(db, article.id).map((row) => toCommentResponse(row));
+  const parsed = listQuerySchema.safeParse(c.req.query());
+  if (!parsed.success) return failValidation(c, parsed.error);
+  const comments = listComments(db, article.id, parsed.data.limit, parsed.data.offset).map((row) =>
+    toCommentResponse(row),
+  );
   return c.json({ comments });
 });
 

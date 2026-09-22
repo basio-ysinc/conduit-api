@@ -99,6 +99,35 @@ describe("comments", () => {
     const listMissing = await app.request("/api/articles/nope/comments");
     expect(listMissing.status).toBe(404);
   });
+
+  it("paginates the comment list with limit/offset", async () => {
+    const token = await register("page");
+    const slug = await createArticle(token, "page");
+    for (const body of ["c1", "c2", "c3"]) {
+      const res = await app.request(`/api/articles/${slug}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...auth(token) },
+        body: JSON.stringify({ comment: { body } }),
+      });
+      expect(res.status).toBe(201);
+    }
+
+    const page1 = await app.request(`/api/articles/${slug}/comments?limit=2`);
+    expect(page1.status).toBe(200);
+    expect((await page1.json()).comments.map((c: { body: string }) => c.body)).toEqual([
+      "c1",
+      "c2",
+    ]);
+
+    const page2 = await app.request(`/api/articles/${slug}/comments?limit=2&offset=2`);
+    expect(page2.status).toBe(200);
+    expect((await page2.json()).comments.map((c: { body: string }) => c.body)).toEqual(["c3"]);
+
+    for (const query of ["limit=0", "limit=101", "limit=abc", "offset=-1"]) {
+      const res = await app.request(`/api/articles/${slug}/comments?${query}`);
+      expect(res.status).toBe(422);
+    }
+  });
 });
 
 describe("authorization", () => {
