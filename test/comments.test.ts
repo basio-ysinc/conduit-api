@@ -171,4 +171,30 @@ describe("authorization", () => {
     expect(missingComment.status).toBe(404);
     expect(await missingComment.json()).toEqual({ errors: { comment: ["not found"] } });
   });
+
+  it("returns 404 when the comment belongs to a different article", async () => {
+    const token = await register("scope");
+    const slugA = await createArticle(token, "scope-a");
+    const slugB = await createArticle(token, "scope-b");
+
+    const created = await app.request(`/api/articles/${slugB}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...auth(token) },
+      body: JSON.stringify({ comment: { body: "comment on B" } }),
+    });
+    expect(created.status).toBe(201);
+    const { comment } = await created.json();
+
+    const del = await app.request(`/api/articles/${slugA}/comments/${comment.id}`, {
+      method: "DELETE",
+      headers: auth(token),
+    });
+    expect(del.status).toBe(404);
+    expect(await del.json()).toEqual({ errors: { comment: ["not found"] } });
+
+    const listB = await app.request(`/api/articles/${slugB}/comments`);
+    const { comments } = await listB.json();
+    expect(comments).toHaveLength(1);
+    expect(comments[0].id).toBe(comment.id);
+  });
 });
