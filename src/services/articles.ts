@@ -63,7 +63,7 @@ export function createArticle(
 ): ArticleJson {
   const now = new Date().toISOString();
   const slug = uniqueSlug(db, input.title);
-  const tags = input.tagList ?? [];
+  const tags = [...new Set(input.tagList ?? [])];
   const insert = db.prepare(
     "INSERT INTO articles (slug, title, description, body, author_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
