@@ -9,23 +9,15 @@ CREATE TABLE articles (
   updated_at TEXT NOT NULL
 );
 
-CREATE INDEX idx_articles_author ON articles(author_id);
-CREATE INDEX idx_articles_created ON articles(created_at DESC, id DESC);
+CREATE TABLE tags (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE
+);
 
+-- position はその記事内での tagList の並び順(リクエストで受けた順)を保持する
 CREATE TABLE article_tags (
   article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
-  tag TEXT NOT NULL,
+  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
   position INTEGER NOT NULL,
-  PRIMARY KEY (article_id, tag)
+  PRIMARY KEY (article_id, tag_id)
 );
-
-CREATE INDEX idx_article_tags_tag ON article_tags(tag, article_id);
-
-CREATE TABLE favorites (
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  article_id INTEGER NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
-  created_at TEXT NOT NULL,
-  PRIMARY KEY (user_id, article_id)
-);
-
-CREATE INDEX idx_favorites_article ON favorites(article_id);

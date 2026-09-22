@@ -1,43 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { openDatabase } from "../src/db/index.js";
-import { parsePagination } from "../src/lib/pagination.js";
-
-describe("parsePagination", () => {
-  it("defaults to limit=20, offset=0", () => {
-    expect(parsePagination({})).toEqual({ ok: true, value: { limit: 20, offset: 0 } });
-  });
-
-  it("accepts valid limit/offset", () => {
-    expect(parsePagination({ limit: "1", offset: "5" })).toEqual({
-      ok: true,
-      value: { limit: 1, offset: 5 },
-    });
-    expect(parsePagination({ limit: "100" })).toEqual({
-      ok: true,
-      value: { limit: 100, offset: 0 },
-    });
-  });
-
-  it("clamps limit above the max to 100", () => {
-    expect(parsePagination({ limit: "101" })).toEqual({
-      ok: true,
-      value: { limit: 100, offset: 0 },
-    });
-  });
-
-  it.each(["0", "-1", "abc", "1.5", "", "99999999999999999999"])("rejects limit=%s", (limit) => {
-    const res = parsePagination({ limit });
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.errors.limit).toBeDefined();
-  });
-
-  it.each(["-1", "abc", "1.5", "", "99999999999999999999"])("rejects offset=%s", (offset) => {
-    const res = parsePagination({ offset });
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.errors.offset).toBeDefined();
-  });
-});
 
 async function registerUser(app: ReturnType<typeof createApp>, name: string) {
   const res = await app.request("/api/users", {
@@ -85,7 +48,13 @@ describe("GET /api/articles pagination", () => {
 
   it("returns 422 for invalid limit/offset", async () => {
     const app = createApp(openDatabase(":memory:"));
-    for (const q of ["limit=0", "limit=abc", "offset=-1", "offset=99999999999999999999"]) {
+    for (const q of [
+      "limit=0",
+      "limit=101",
+      "limit=abc",
+      "offset=-1",
+      "offset=99999999999999999999",
+    ]) {
       const res = await app.request(`/api/articles?${q}`);
       expect(res.status).toBe(422);
       expect(await res.json()).toMatchObject({ errors: expect.any(Object) });

@@ -1,7 +1,9 @@
 import { randomBytes } from "node:crypto";
 import type { Db } from "../db/index.js";
+import { favoritesCount, isFavorited } from "./favorites.js";
+import type { UserRow } from "./users.js";
 
-type ArticleRow = {
+export type ArticleRow = {
   id: number;
   slug: string;
   title: string;
@@ -12,230 +14,184 @@ type ArticleRow = {
   updated_at: string;
 };
 
-type ListRow = ArticleRow & {
-  author_username: string;
-  author_bio: string | null;
-  author_image: string | null;
-};
-
-export type ArticleJson = {
-  slug: string;
-  title: string;
-  description: string;
-  body?: string;
-  tagList: string[];
-  createdAt: string;
-  updatedAt: string;
-  favorited: boolean;
-  favoritesCount: number;
-  author: {
-    username: string;
-    bio: string | null;
-    image: string | null;
-    following: boolean;
-  };
-};
-
-const randomSuffix = () => randomBytes(3).toString("hex");
-
-// TBD-1: タイトルを kebab-case 化し、衝突時はランダム接尾辞で一意にする
-function slugify(title: string): string {
+// decisions.md TBD-1: タイトルを kebab-case 化し、空白・句読点・記号の連続は 1 個の `-` にする。
+// 非 ASCII の文字(日本語等)は残す(Unicode slug)。
+export function slugify(title: string): string {
   return title
     .toLowerCase()
-    .replace(/[\s\p{P}\p{S}]+/gu, "-")
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^-+|-+$/g, "");
 }
 
+// TBD-1: 衝突時は `-` + 短いランダム接尾辞。変換結果が空なら接尾辞のみを slug にする。
 function uniqueSlug(db: Db, title: string): string {
-  const base = slugify(title);
   const exists = db.prepare("SELECT 1 FROM articles WHERE slug = ?");
-  let slug = base === "" ? randomSuffix() : base;
-  while (exists.get(slug)) {
-    slug = base === "" ? randomSuffix() : `${base}-${randomSuffix()}`;
-  }
+  const suffix = () => randomBytes(3).toString("hex");
+  const base = slugify(title);
+  let slug = base || suffix();
+  while (exists.get(slug)) slug = base ? `${base}-${suffix()}` : suffix();
   return slug;
 }
 
-export function createArticle(
-  db: Db,
-  authorId: number,
-  input: { title: string; description: string; body: string; tagList?: string[] },
-): ArticleJson {
+export function findArticleBySlug(db: Db, slug: string): ArticleRow | undefined {
+  return db.prepare("SELECT * FROM articles WHERE slug = ?").get(slug) as ArticleRow | undefined;
+}
+
+export type CreateArticleInput = {
+  title: string;
+  description: string;
+  body: string;
+  tagList?: string[];
+};
+
+export function createArticle(db: Db, authorId: number, input: CreateArticleInput): ArticleRow {
   const now = new Date().toISOString();
   const slug = uniqueSlug(db, input.title);
-  const tags = [...new Set(input.tagList ?? [])];
-  const insert = db.prepare(
-    "INSERT INTO articles (slug, title, description, body, author_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  );
-  const insertTag = db.prepare(
-    "INSERT INTO article_tags (article_id, tag, position) VALUES (?, ?, ?)",
-  );
-  const articleId = db.transaction(() => {
-    const { lastInsertRowid } = insert.run(
-      slug,
-      input.title,
-      input.description,
-      input.body,
-      authorId,
-      now,
-      now,
-    );
-    const id = Number(lastInsertRowid);
-    tags.forEach((tag, i) => insertTag.run(id, tag, i));
-    return id;
+  db.transaction(() => {
+    const result = db
+      .prepare(
+        "INSERT INTO articles (slug, title, description, body, author_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(slug, input.title, input.description, input.body, authorId, now, now);
+    if (input.tagList !== undefined) {
+      replaceTags(db, Number(result.lastInsertRowid), input.tagList);
+    }
   })();
-  const row = getRow(db, articleId) as ArticleRow;
-  const author = db
-    .prepare("SELECT username, bio, image FROM users WHERE id = ?")
-    .get(authorId) as { username: string; bio: string | null; image: string | null };
-  return toJson(row, {
-    author,
-    tagList: tags,
-    favorited: false,
-    favoritesCount: 0,
-    includeBody: true,
-  });
+  return findArticleBySlug(db, slug) as ArticleRow;
 }
 
-function getRow(db: Db, id: number): ArticleRow | undefined {
-  return db.prepare("SELECT * FROM articles WHERE id = ?").get(id) as ArticleRow | undefined;
+export type UpdateArticlePatch = {
+  title?: string;
+  description?: string;
+  body?: string;
+  tagList?: string[];
+};
+
+/** 指定されたフィールドだけ部分更新する。slug は更新しない(decisions.md TBD-1)。 */
+export function updateArticle(db: Db, row: ArticleRow, patch: UpdateArticlePatch): ArticleRow {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  for (const field of ["title", "description", "body"] as const) {
+    if (patch[field] !== undefined) {
+      sets.push(`${field} = ?`);
+      values.push(patch[field]);
+    }
+  }
+  db.transaction(() => {
+    if (sets.length > 0 || patch.tagList !== undefined) {
+      // 同一ミリ秒の連続更新でも updated_at が必ず進むようにする
+      const next = Math.max(Date.now(), Date.parse(row.updated_at) + 1);
+      sets.push("updated_at = ?");
+      values.push(new Date(next).toISOString());
+      db.prepare(`UPDATE articles SET ${sets.join(", ")} WHERE id = ?`).run(...values, row.id);
+    }
+    if (patch.tagList !== undefined) replaceTags(db, row.id, patch.tagList);
+  })();
+  return findArticleBySlug(db, row.slug) as ArticleRow;
 }
 
-export type ListFilter = {
+export function deleteArticle(db: Db, id: number): void {
+  db.prepare("DELETE FROM articles WHERE id = ?").run(id);
+}
+
+export type ListArticlesQuery = {
   tag?: string;
   author?: string;
   favorited?: string;
+  limit: number;
+  offset: number;
 };
 
-function buildWhere(filter: ListFilter): { whereSql: string; params: string[] } {
+/** 作成日時の降順で返す。count は limit/offset 適用前の総件数(decisions.md TBD-2)。 */
+export function listArticles(
+  db: Db,
+  query: ListArticlesQuery,
+): { rows: ArticleRow[]; count: number } {
   const where: string[] = [];
-  const params: string[] = [];
-  if (filter.tag !== undefined) {
-    where.push("EXISTS (SELECT 1 FROM article_tags t WHERE t.article_id = a.id AND t.tag = ?)");
-    params.push(filter.tag);
-  }
-  if (filter.author !== undefined) {
+  const params: unknown[] = [];
+  if (query.author !== undefined) {
     where.push("u.username = ?");
-    params.push(filter.author);
+    params.push(query.author);
   }
-  if (filter.favorited !== undefined) {
+  if (query.tag !== undefined) {
+    where.push(
+      "EXISTS (SELECT 1 FROM article_tags at JOIN tags t ON t.id = at.tag_id WHERE at.article_id = a.id AND t.name = ?)",
+    );
+    params.push(query.tag);
+  }
+  if (query.favorited !== undefined) {
     where.push(
       "EXISTS (SELECT 1 FROM favorites f JOIN users fu ON fu.id = f.user_id WHERE f.article_id = a.id AND fu.username = ?)",
     );
-    params.push(filter.favorited);
+    params.push(query.favorited);
   }
-  return { whereSql: where.length ? `WHERE ${where.join(" AND ")}` : "", params };
+  const cond = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
+  const from = "FROM articles a JOIN users u ON u.id = a.author_id";
+  const count = (db.prepare(`SELECT COUNT(*) AS c ${from} ${cond}`).get(...params) as { c: number })
+    .c;
+  const rows = db
+    .prepare(`SELECT a.* ${from} ${cond} ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?`)
+    .all(...params, query.limit, query.offset) as ArticleRow[];
+  return { rows, count };
+}
+
+/** タグ名の配列で記事のタグを張り替える。記事内の並び順を position に保持する。 */
+function replaceTags(db: Db, articleId: number, tagList: string[]): void {
+  const names = [...new Set(tagList)];
+  const insertTag = db.prepare("INSERT OR IGNORE INTO tags (name) VALUES (?)");
+  const findTag = db.prepare("SELECT id FROM tags WHERE name = ?");
+  const insertLink = db.prepare(
+    "INSERT INTO article_tags (article_id, tag_id, position) VALUES (?, ?, ?)",
+  );
+  db.prepare("DELETE FROM article_tags WHERE article_id = ?").run(articleId);
+  names.forEach((name, position) => {
+    insertTag.run(name);
+    const tagId = (findTag.get(name) as { id: number }).id;
+    insertLink.run(articleId, tagId, position);
+  });
+}
+
+function tagNames(db: Db, articleId: number): string[] {
+  const rows = db
+    .prepare(
+      "SELECT t.name FROM article_tags at JOIN tags t ON t.id = at.tag_id WHERE at.article_id = ? ORDER BY at.position",
+    )
+    .all(articleId) as { name: string }[];
+  return rows.map((r) => r.name);
+}
+
+type Profile = { username: string; bio: string | null; image: string | null; following: boolean };
+
+// follows 機能(A6 以降)が入るまで following は常に false
+function profileResponse(author: UserRow): Profile {
+  return {
+    username: author.username,
+    bio: author.bio,
+    image: author.image,
+    following: false,
+  };
 }
 
 /**
- * 一覧取得。articlesCount はフィルタ後・ページネーション前の総件数(TBD-2)。
- * feed(A5)も同じ組み立てで author_id の絞り込みだけ差し替える想定。
+ * 記事の JSON 表現。favorited は viewer(閲覧ユーザー)基準、未認証なら false。
+ * 一覧では body を含めない(openapi.yml MultipleArticlesResponse)。
  */
-export function listArticles(
+export function articleResponse(
   db: Db,
-  filter: ListFilter,
-  page: { limit: number; offset: number },
-  viewerId: number | undefined,
-): { articles: ArticleJson[]; articlesCount: number } {
-  const { whereSql, params } = buildWhere(filter);
-  const rows = db
-    .prepare(
-      `SELECT a.*, u.username AS author_username, u.bio AS author_bio, u.image AS author_image
-       FROM articles a JOIN users u ON u.id = a.author_id
-       ${whereSql}
-       ORDER BY a.created_at DESC, a.id DESC
-       LIMIT ? OFFSET ?`,
-    )
-    .all(...params, page.limit, page.offset) as ListRow[];
-  const { n: articlesCount } = db
-    .prepare(`SELECT COUNT(*) AS n FROM articles a JOIN users u ON u.id = a.author_id ${whereSql}`)
-    .get(...params) as { n: number };
-  return { articles: toJsonList(db, rows, viewerId), articlesCount };
-}
-
-function toJsonList(db: Db, rows: ListRow[], viewerId: number | undefined): ArticleJson[] {
-  if (rows.length === 0) return [];
-  const ids = rows.map((r) => r.id);
-  const placeholders = ids.map(() => "?").join(",");
-
-  const tagRows = db
-    .prepare(
-      `SELECT article_id, tag FROM article_tags WHERE article_id IN (${placeholders}) ORDER BY position`,
-    )
-    .all(...ids) as { article_id: number; tag: string }[];
-  const tagsByArticle = new Map<number, string[]>();
-  for (const { article_id, tag } of tagRows) {
-    const list = tagsByArticle.get(article_id) ?? [];
-    list.push(tag);
-    tagsByArticle.set(article_id, list);
-  }
-
-  const favRows = db
-    .prepare(
-      `SELECT article_id, COUNT(*) AS n FROM favorites WHERE article_id IN (${placeholders}) GROUP BY article_id`,
-    )
-    .all(...ids) as { article_id: number; n: number }[];
-  const favCountByArticle = new Map(favRows.map((r) => [r.article_id, r.n]));
-
-  const viewerFavs = new Set<number>(
-    viewerId === undefined
-      ? []
-      : (
-          db
-            .prepare(
-              `SELECT article_id FROM favorites WHERE user_id = ? AND article_id IN (${placeholders})`,
-            )
-            .all(viewerId, ...ids) as { article_id: number }[]
-        ).map((r) => r.article_id),
-  );
-
-  return rows.map((row) =>
-    toJson(row, {
-      author: {
-        username: row.author_username,
-        bio: row.author_bio,
-        image: row.author_image,
-      },
-      tagList: tagsByArticle.get(row.id) ?? [],
-      favorited: viewerFavs.has(row.id),
-      favoritesCount: favCountByArticle.get(row.id) ?? 0,
-      includeBody: false,
-    }),
-  );
-}
-
-export type DeleteResult = "deleted" | "not_found" | "forbidden";
-
-export function deleteArticle(db: Db, slug: string, userId: number): DeleteResult {
-  const row = db.prepare("SELECT id, author_id FROM articles WHERE slug = ?").get(slug) as
-    | { id: number; author_id: number }
-    | undefined;
-  if (!row) return "not_found";
-  if (row.author_id !== userId) return "forbidden";
-  db.prepare("DELETE FROM articles WHERE id = ?").run(row.id);
-  return "deleted";
-}
-
-function toJson(
   row: ArticleRow,
-  ctx: {
-    author: { username: string; bio: string | null; image: string | null };
-    tagList: string[];
-    favorited: boolean;
-    favoritesCount: number;
-    includeBody: boolean;
-  },
-): ArticleJson {
+  author: UserRow,
+  { includeBody, viewer }: { includeBody: boolean; viewer?: UserRow },
+) {
   return {
     slug: row.slug,
     title: row.title,
     description: row.description,
-    ...(ctx.includeBody ? { body: row.body } : {}),
-    tagList: ctx.tagList,
+    ...(includeBody ? { body: row.body } : {}),
+    tagList: tagNames(db, row.id),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    favorited: ctx.favorited,
-    favoritesCount: ctx.favoritesCount,
-    author: { ...ctx.author, following: false },
+    favorited: viewer !== undefined && isFavorited(db, viewer.id, row.id),
+    favoritesCount: favoritesCount(db, row.id),
+    author: profileResponse(author),
   };
 }
