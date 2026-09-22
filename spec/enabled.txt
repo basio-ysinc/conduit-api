@@ -2,5 +2,6 @@
 # 例: auth.hurl
 auth.hurl
 errors_auth.hurl
+articles.hurl
 profiles.hurl
 errors_profiles.hurl
