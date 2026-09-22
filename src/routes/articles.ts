@@ -40,7 +40,13 @@ const paginationSchema = z.object({
     .transform(Number)
     .pipe(z.number().int().min(1).max(100))
     .optional(),
-  offset: z.string().regex(/^\d+$/).transform(Number).pipe(z.number().int().min(0)).optional(),
+  // 安全整数でない offset も範囲外として 422
+  offset: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .pipe(z.number().int().min(0).max(Number.MAX_SAFE_INTEGER))
+    .optional(),
 });
 
 const listQuerySchema = paginationSchema.extend({

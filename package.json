@@ -5,7 +5,7 @@
   "type": "module",
   "engines": { "node": ">=22" },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "JWT_SECRET=conduit-dev-secret tsx watch src/index.ts",
     "build": "tsc -p tsconfig.build.json && mkdir -p dist/db && cp -R src/db/migrations dist/db/",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
