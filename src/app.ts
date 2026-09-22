@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Db } from "./db/index.js";
 import { articleProtectedRoutes, articlesRoutes } from "./routes/articles.js";
+import { profileFollowRoutes, profilesRoutes } from "./routes/profiles.js";
 import { userRoutes } from "./routes/user.js";
 import { usersRoutes } from "./routes/users.js";
 import type { UserRow } from "./services/users.js";
@@ -21,6 +22,8 @@ export function createApp(db: Db): Hono<AppEnv> {
   app.route("/", userRoutes);
   app.route("/", articleProtectedRoutes);
   app.route("/", articlesRoutes);
+  app.route("/", profilesRoutes);
+  app.route("/", profileFollowRoutes);
   app.notFound((c) => c.json({ errors: { body: ["not found"] } }, 404));
   app.onError((e, c) => {
     console.error(e);

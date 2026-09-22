@@ -5,3 +5,5 @@ errors_auth.hurl
 articles.hurl
 favorites.hurl
 errors_articles.hurl
+profiles.hurl
+errors_profiles.hurl
