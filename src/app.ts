@@ -1,5 +1,8 @@
 import { Hono } from "hono";
 import type { Db } from "./db/index.js";
+import { articlesRoutes } from "./routes/articles.js";
+import { commentsRoutes } from "./routes/comments.js";
+import { usersRoutes } from "./routes/users.js";
 
 export type AppEnv = { Variables: { db: Db } };
 
@@ -11,6 +14,10 @@ export function createApp(db: Db): Hono<AppEnv> {
     await next();
   });
   app.get("/api/health", (c) => c.json({ status: "ok" }));
+  app.route("/api/users", usersRoutes);
+  app.route("/api/articles", articlesRoutes);
+  app.route("/api/articles", commentsRoutes);
   app.notFound((c) => c.json({ errors: { body: ["not found"] } }, 404));
+  app.onError((_err, c) => c.json({ errors: { body: ["internal error"] } }, 500));
   return app;
 }

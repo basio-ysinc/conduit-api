@@ -1,2 +1,5 @@
 # main で必ず通る hurl ファイルの一覧。1 行 1 ファイル。チケットで対応した hurl ファイルをここに追加する。
 # 例: auth.hurl
+comments.hurl
+errors_comments.hurl
+errors_authorization.hurl
