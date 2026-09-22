@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Db } from "./db/index.js";
-import { articlesRoutes } from "./routes/articles.js";
+import { articleProtectedRoutes, articlesRoutes } from "./routes/articles.js";
 import { profileFollowRoutes, profilesRoutes } from "./routes/profiles.js";
 import { userRoutes } from "./routes/user.js";
 import { usersRoutes } from "./routes/users.js";
@@ -20,6 +20,7 @@ export function createApp(db: Db): Hono<AppEnv> {
   app.get("/api/health", (c) => c.json({ status: "ok" }));
   app.route("/", usersRoutes);
   app.route("/", userRoutes);
+  app.route("/", articleProtectedRoutes);
   app.route("/", articlesRoutes);
   app.route("/", profilesRoutes);
   app.route("/", profileFollowRoutes);

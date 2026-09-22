@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { Db } from "../db/index.js";
+import { favoritesCount, isFavorited } from "./favorites.js";
 import type { UserRow } from "./users.js";
 
 export type ArticleRow = {
@@ -96,6 +97,7 @@ export function deleteArticle(db: Db, id: number): void {
 export type ListArticlesQuery = {
   tag?: string;
   author?: string;
+  favorited?: string;
   limit: number;
   offset: number;
 };
@@ -116,6 +118,12 @@ export function listArticles(
       "EXISTS (SELECT 1 FROM article_tags at JOIN tags t ON t.id = at.tag_id WHERE at.article_id = a.id AND t.name = ?)",
     );
     params.push(query.tag);
+  }
+  if (query.favorited !== undefined) {
+    where.push(
+      "EXISTS (SELECT 1 FROM favorites f JOIN users fu ON fu.id = f.user_id WHERE f.article_id = a.id AND fu.username = ?)",
+    );
+    params.push(query.favorited);
   }
   const cond = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
   const from = "FROM articles a JOIN users u ON u.id = a.author_id";
@@ -165,14 +173,14 @@ function profileResponse(author: UserRow): Profile {
 }
 
 /**
- * 記事の JSON 表現。favorited / favoritesCount は A6 までは常に false / 0。
+ * 記事の JSON 表現。favorited は viewer(閲覧ユーザー)基準、未認証なら false。
  * 一覧では body を含めない(openapi.yml MultipleArticlesResponse)。
  */
 export function articleResponse(
   db: Db,
   row: ArticleRow,
   author: UserRow,
-  { includeBody }: { includeBody: boolean },
+  { includeBody, viewer }: { includeBody: boolean; viewer?: UserRow },
 ) {
   return {
     slug: row.slug,
@@ -182,8 +190,8 @@ export function articleResponse(
     tagList: tagNames(db, row.id),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    favorited: false,
-    favoritesCount: 0,
+    favorited: viewer !== undefined && isFavorited(db, viewer.id, row.id),
+    favoritesCount: favoritesCount(db, row.id),
     author: profileResponse(author),
   };
 }
