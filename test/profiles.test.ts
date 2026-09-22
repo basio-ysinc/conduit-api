@@ -45,6 +45,14 @@ describe("GET /api/profiles/:username", () => {
     expect((await (await get()).json()).profile.following).toBe(true);
   });
 
+  it("不正なトークンは 401 errors.token を返す", async () => {
+    const a = app();
+    await register(a, { username: "celeb", email: "celeb@test.com", password: "password123" });
+    const res = await a.request("/api/profiles/celeb", { headers: auth("garbage") });
+    expect(res.status).toBe(401);
+    expect((await res.json()).errors.token[0]).toBe("is invalid");
+  });
+
   it("存在しないユーザーは 404 errors.profile を返す", async () => {
     const res = await app().request("/api/profiles/nobody");
     expect(res.status).toBe(404);
