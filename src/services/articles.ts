@@ -135,32 +135,6 @@ export function listArticles(
   return { rows, count };
 }
 
-// follows テーブルは A2(profiles)のチケットが持つ。未マージの間はフォロー関係が
-// 存在し得ないため、テーブルが無い場合は空を返す(実クエリと結果は同じ)。
-function hasFollowsTable(db: Db): boolean {
-  return (
-    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'follows'").get() !==
-    undefined
-  );
-}
-
-/** フォロー中ユーザーの記事を作成日時の降順で返す。count は limit/offset 適用前の総件数。 */
-export function listFeed(
-  db: Db,
-  userId: number,
-  query: { limit: number; offset: number },
-): { rows: ArticleRow[]; count: number } {
-  if (!hasFollowsTable(db)) return { rows: [], count: 0 };
-  const from =
-    "FROM articles a JOIN users u ON u.id = a.author_id JOIN follows f ON f.followee_id = a.author_id";
-  const cond = "WHERE f.follower_id = ?";
-  const count = (db.prepare(`SELECT COUNT(*) AS c ${from} ${cond}`).get(userId) as { c: number }).c;
-  const rows = db
-    .prepare(`SELECT a.* ${from} ${cond} ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?`)
-    .all(userId, query.limit, query.offset) as ArticleRow[];
-  return { rows, count };
-}
-
 /** タグ名の配列で記事のタグを張り替える。記事内の並び順を position に保持する。 */
 function replaceTags(db: Db, articleId: number, tagList: string[]): void {
   const names = [...new Set(tagList)];

@@ -9,7 +9,6 @@ import {
   deleteArticle,
   findArticleBySlug,
   listArticles,
-  listFeed,
   updateArticle,
 } from "../services/articles.js";
 import { favoriteArticle, unfavoriteArticle } from "../services/favorites.js";
@@ -95,27 +94,15 @@ articlesRoutes.get("/api/articles/:slug", optionalAuth, (c) => {
 /** 認証必須の系。/api/articles/feed は :slug より先に登録する("feed" が slug 扱いされないように)。 */
 export const articleProtectedRoutes = new Hono<AppEnv>();
 
+// follows テーブルは profiles 系チケットの範囲。未導入の間はフォロー中の記事が
+// 存在し得ないため、認証と limit/offset の検証(TBD-2)だけ行い空の一覧を返す。
 articleProtectedRoutes.get("/api/articles/feed", requireAuth, (c) => {
   const parsed = paginationSchema.safeParse({
     limit: c.req.query("limit"),
     offset: c.req.query("offset"),
   });
   if (!parsed.success) return c.json(validationErrors(parsed.error), 422);
-  const db = c.get("db");
-  const user = c.get("user");
-  const { rows, count } = listFeed(db, user.id, {
-    limit: parsed.data.limit ?? 20,
-    offset: parsed.data.offset ?? 0,
-  });
-  return c.json({
-    articles: rows.map((row) =>
-      articleResponse(db, row, findUserById(db, row.author_id) as UserRow, {
-        includeBody: false,
-        viewer: user,
-      }),
-    ),
-    articlesCount: count,
-  });
+  return c.json({ articles: [], articlesCount: 0 });
 });
 
 articleProtectedRoutes.post("/api/articles", requireAuth, async (c) => {
