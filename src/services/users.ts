@@ -1,51 +1,97 @@
+import { hashPassword, verifyPassword } from "../auth/passwords.js";
 import type { Db } from "../db/index.js";
 
 export type UserRow = {
   id: number;
-  username: string;
   email: string;
+  username: string;
   password_hash: string;
   bio: string | null;
   image: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
-export type Profile = {
-  username: string;
-  bio: string | null;
-  image: string | null;
-  following: boolean;
-};
+/** email / username の UNIQUE 制約違反。field はエラーレスポンスのキーに使う。 */
+export class ConflictError extends Error {
+  constructor(public readonly field: "email" | "username") {
+    super(`${field} has already been taken`);
+  }
+}
+
+export function findUserById(db: Db, id: number): UserRow | undefined {
+  return db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined;
+}
+
+export function findUserByEmail(db: Db, email: string): UserRow | undefined {
+  return db.prepare("SELECT * FROM users WHERE email = ?").get(email) as UserRow | undefined;
+}
 
 export function createUser(
   db: Db,
-  input: { username: string; email: string; passwordHash: string },
+  input: { username: string; email: string; password: string },
 ): UserRow {
-  const now = new Date().toISOString();
-  const info = db
-    .prepare(
-      "INSERT INTO users (username, email, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-    )
-    .run(input.username, input.email, input.passwordHash, now, now);
-  return findUserById(db, Number(info.lastInsertRowid)) as UserRow;
+  try {
+    const result = db
+      .prepare("INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)")
+      .run(input.username, input.email, hashPassword(input.password));
+    return findUserById(db, Number(result.lastInsertRowid)) as UserRow;
+  } catch (e) {
+    throw toConflict(e);
+  }
 }
 
-export function findUserById(db: Db, id: number): UserRow | null {
-  return (db.prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow) ?? null;
+export function authenticateUser(db: Db, email: string, password: string): UserRow | undefined {
+  const user = findUserByEmail(db, email);
+  if (!user || !verifyPassword(password, user.password_hash)) return undefined;
+  return user;
 }
 
-export function findUserByUsername(db: Db, username: string): UserRow | null {
-  return (db.prepare("SELECT * FROM users WHERE username = ?").get(username) as UserRow) ?? null;
+export type UpdateUserPatch = {
+  username?: string;
+  email?: string;
+  password?: string;
+  bio?: string | null;
+  image?: string | null;
+};
+
+/** 指定されたフィールドだけ部分更新する。undefined は「送られていない」= 変更しない。 */
+export function updateUser(db: Db, id: number, patch: UpdateUserPatch): UserRow {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  if (patch.username !== undefined) {
+    sets.push("username = ?");
+    values.push(patch.username);
+  }
+  if (patch.email !== undefined) {
+    sets.push("email = ?");
+    values.push(patch.email);
+  }
+  if (patch.password !== undefined) {
+    sets.push("password_hash = ?");
+    values.push(hashPassword(patch.password));
+  }
+  if (patch.bio !== undefined) {
+    sets.push("bio = ?");
+    values.push(patch.bio);
+  }
+  if (patch.image !== undefined) {
+    sets.push("image = ?");
+    values.push(patch.image);
+  }
+  if (sets.length > 0) {
+    sets.push("updated_at = datetime('now')");
+    try {
+      db.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).run(...values, id);
+    } catch (e) {
+      throw toConflict(e);
+    }
+  }
+  return findUserById(db, id) as UserRow;
 }
 
-export function findUserByEmail(db: Db, email: string): UserRow | null {
-  return (db.prepare("SELECT * FROM users WHERE email = ?").get(email) as UserRow) ?? null;
-}
-
-export function toProfile(user: UserRow): Profile {
-  return { username: user.username, bio: user.bio, image: user.image, following: false };
-}
-
-export function toUserResponse(user: UserRow, token: string) {
+/** UserResponse の user オブジェクト(decisions.md / openapi.yml の User schema) */
+export function userResponse(user: UserRow, token: string) {
   return {
     email: user.email,
     token,
@@ -53,4 +99,11 @@ export function toUserResponse(user: UserRow, token: string) {
     bio: user.bio,
     image: user.image,
   };
+}
+
+function toConflict(e: unknown): unknown {
+  if (e instanceof Error && e.message.includes("UNIQUE constraint failed")) {
+    return new ConflictError(e.message.includes("users.email") ? "email" : "username");
+  }
+  return e;
 }

@@ -1,5 +1,6 @@
 import type { Db } from "../db/index.js";
-import { type UserRow, toProfile } from "./users.js";
+import { isFollowing, profileResponse } from "./profiles.js";
+import type { UserRow } from "./users.js";
 
 export type CommentRow = {
   id: number;
@@ -8,12 +9,6 @@ export type CommentRow = {
   body: string;
   created_at: string;
   updated_at: string;
-};
-
-type CommentWithAuthor = CommentRow & {
-  author_username: string;
-  author_bio: string | null;
-  author_image: string | null;
 };
 
 export function addComment(db: Db, articleId: number, authorId: number, body: string): CommentRow {
@@ -26,45 +21,33 @@ export function addComment(db: Db, articleId: number, authorId: number, body: st
   return findCommentById(db, Number(info.lastInsertRowid)) as CommentRow;
 }
 
-export function findCommentById(db: Db, id: number): CommentRow | null {
-  return (db.prepare("SELECT * FROM comments WHERE id = ?").get(id) as CommentRow) ?? null;
+export function findCommentById(db: Db, id: number): CommentRow | undefined {
+  return db.prepare("SELECT * FROM comments WHERE id = ?").get(id) as CommentRow | undefined;
 }
 
-/** 記事に紐づくコメントを作者情報つきで返す(作成順)。 */
+/** 記事に紐づくコメントを作成順で返す。 */
 export function listComments(
   db: Db,
   articleId: number,
   limit: number,
   offset: number,
-): CommentWithAuthor[] {
+): CommentRow[] {
   return db
-    .prepare(
-      `SELECT c.*, u.username AS author_username, u.bio AS author_bio, u.image AS author_image
-       FROM comments c JOIN users u ON u.id = c.author_id
-       WHERE c.article_id = ? ORDER BY c.id LIMIT ? OFFSET ?`,
-    )
-    .all(articleId, limit, offset) as CommentWithAuthor[];
+    .prepare("SELECT * FROM comments WHERE article_id = ? ORDER BY id LIMIT ? OFFSET ?")
+    .all(articleId, limit, offset) as CommentRow[];
 }
 
-export function deleteComment(db: Db, comment: CommentRow): void {
-  db.prepare("DELETE FROM comments WHERE id = ?").run(comment.id);
+export function deleteComment(db: Db, id: number): void {
+  db.prepare("DELETE FROM comments WHERE id = ?").run(id);
 }
 
-export function toCommentResponse(comment: CommentRow | CommentWithAuthor, author?: UserRow) {
-  const profile =
-    "author_username" in comment
-      ? {
-          username: comment.author_username,
-          bio: comment.author_bio,
-          image: comment.author_image,
-          following: false,
-        }
-      : toProfile(author as UserRow);
+/** コメントの JSON 表現。author.following は viewer(閲覧ユーザー)基準、未認証なら false。 */
+export function commentResponse(db: Db, row: CommentRow, author: UserRow, viewer?: UserRow) {
   return {
-    id: comment.id,
-    createdAt: comment.created_at,
-    updatedAt: comment.updated_at,
-    body: comment.body,
-    author: profile,
+    id: row.id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    body: row.body,
+    author: profileResponse(author, viewer !== undefined && isFollowing(db, viewer.id, author.id)),
   };
 }

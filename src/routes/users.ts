@@ -1,30 +1,52 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../app.js";
-import { hashPassword, signToken } from "../auth.js";
-import { fail, failValidation, readJson } from "../errors.js";
-import {
-  createUser,
-  findUserByEmail,
-  findUserByUsername,
-  toUserResponse,
-} from "../services/users.js";
+import { issueToken } from "../auth/jwt.js";
+import { validationErrors } from "../errors.js";
+import { ConflictError, authenticateUser, createUser, userResponse } from "../services/users.js";
 
-const nonBlank = z.string().refine((s) => s.trim().length > 0);
+// パスワード方針: NIST 800-63B(errors_auth.hurl 参照)。最低 8 文字、上限なし
+const passwordSchema = z
+  .string()
+  .min(1, "can't be blank")
+  .min(8, "is too short (minimum is 8 characters)");
 
 const registerSchema = z.object({
-  user: z.object({ username: nonBlank, email: nonBlank, password: nonBlank }),
+  user: z.object({
+    username: z.string().min(1, "can't be blank"),
+    email: z.string().min(1, "can't be blank"),
+    password: passwordSchema,
+  }),
+});
+
+const loginSchema = z.object({
+  user: z.object({
+    email: z.string().min(1, "can't be blank"),
+    password: z.string().min(1, "can't be blank"),
+  }),
 });
 
 export const usersRoutes = new Hono<AppEnv>();
 
-usersRoutes.post("/", async (c) => {
-  const parsed = registerSchema.safeParse(await readJson(c));
-  if (!parsed.success) return failValidation(c, parsed.error);
-  const db = c.get("db");
-  const { username, email, password } = parsed.data.user;
-  if (findUserByUsername(db, username)) return fail(c, 409, "username", "has already been taken");
-  if (findUserByEmail(db, email)) return fail(c, 409, "email", "has already been taken");
-  const user = createUser(db, { username, email, passwordHash: hashPassword(password) });
-  return c.json({ user: toUserResponse(user, signToken(user.id)) }, 201);
+usersRoutes.post("/api/users", async (c) => {
+  const parsed = registerSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json(validationErrors(parsed.error), 422);
+  try {
+    const user = createUser(c.get("db"), parsed.data.user);
+    return c.json({ user: userResponse(user, await issueToken(user.id)) }, 201);
+  } catch (e) {
+    if (e instanceof ConflictError) {
+      return c.json({ errors: { [e.field]: ["has already been taken"] } }, 409);
+    }
+    throw e;
+  }
+});
+
+usersRoutes.post("/api/users/login", async (c) => {
+  const parsed = loginSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json(validationErrors(parsed.error), 422);
+  const { email, password } = parsed.data.user;
+  const user = authenticateUser(c.get("db"), email, password);
+  if (!user) return c.json({ errors: { credentials: ["invalid"] } }, 401);
+  return c.json({ user: userResponse(user, await issueToken(user.id)) });
 });

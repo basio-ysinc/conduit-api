@@ -1,64 +1,88 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { AppEnv } from "../app.js";
-import { authErrorMessage, authenticate } from "../auth.js";
-import { fail, failValidation, readJson } from "../errors.js";
-import { getArticleBySlug } from "../services/articles.js";
+import type { AppEnv, OptionalAuthEnv } from "../app.js";
+import { optionalAuth, requireAuth } from "../auth/middleware.js";
+import { validationErrors } from "../errors.js";
+import { findArticleBySlug } from "../services/articles.js";
 import {
   addComment,
+  commentResponse,
   deleteComment,
   findCommentById,
   listComments,
-  toCommentResponse,
 } from "../services/comments.js";
+import { type UserRow, findUserById } from "../services/users.js";
 
 const createSchema = z.object({
-  comment: z.object({ body: z.string().refine((s) => s.trim().length > 0) }),
+  comment: z.object({
+    body: z.string().refine((s) => s.trim().length > 0, "can't be blank"),
+  }),
 });
 
-// decisions.md TBD-2: limit は 1..100(既定 20)、offset は 0 以上(既定 0)。範囲外は 422。
+// decisions.md TBD-2: limit 既定 20・上限 100、offset 既定 0。範囲外・非整数は 422
 const listQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).default(20),
-  offset: z.coerce.number().int().min(0).default(0),
+  limit: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .pipe(z.number().int().min(1).max(100))
+    .optional(),
+  offset: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .pipe(z.number().int().min(0).max(Number.MAX_SAFE_INTEGER))
+    .optional(),
 });
 
-export const commentsRoutes = new Hono<AppEnv>();
+/** 認証任意の読み取り系。c.var.user は undefined になりうる(OptionalAuthEnv)。 */
+export const commentsRoutes = new Hono<OptionalAuthEnv>();
 
-// 認証は任意。記事が無ければ 404。
-commentsRoutes.get("/:slug/comments", (c) => {
+commentsRoutes.get("/api/articles/:slug/comments", optionalAuth, (c) => {
   const db = c.get("db");
-  const article = getArticleBySlug(db, c.req.param("slug"));
-  if (!article) return fail(c, 404, "article", "not found");
-  const parsed = listQuerySchema.safeParse(c.req.query());
-  if (!parsed.success) return failValidation(c, parsed.error);
-  const comments = listComments(db, article.id, parsed.data.limit, parsed.data.offset).map((row) =>
-    toCommentResponse(row),
-  );
+  const article = findArticleBySlug(db, c.req.param("slug"));
+  if (!article) return c.json({ errors: { article: ["not found"] } }, 404);
+  const parsed = listQuerySchema.safeParse({
+    limit: c.req.query("limit"),
+    offset: c.req.query("offset"),
+  });
+  if (!parsed.success) return c.json(validationErrors(parsed.error), 422);
+  const viewer = c.get("user");
+  const comments = listComments(
+    db,
+    article.id,
+    parsed.data.limit ?? 20,
+    parsed.data.offset ?? 0,
+  ).map((row) => commentResponse(db, row, findUserById(db, row.author_id) as UserRow, viewer));
   return c.json({ comments });
 });
 
-commentsRoutes.post("/:slug/comments", async (c) => {
+/** 認証必須の系。 */
+export const commentProtectedRoutes = new Hono<AppEnv>();
+
+commentProtectedRoutes.post("/api/articles/:slug/comments", requireAuth, async (c) => {
   const db = c.get("db");
-  const auth = authenticate(db, c.req.header("Authorization"));
-  if ("error" in auth) return fail(c, 401, "token", authErrorMessage(auth.error));
-  const article = getArticleBySlug(db, c.req.param("slug"));
-  if (!article) return fail(c, 404, "article", "not found");
-  const parsed = createSchema.safeParse(await readJson(c));
-  if (!parsed.success) return failValidation(c, parsed.error);
-  const comment = addComment(db, article.id, auth.user.id, parsed.data.comment.body);
-  return c.json({ comment: toCommentResponse(comment, auth.user) }, 201);
+  const article = findArticleBySlug(db, c.req.param("slug"));
+  if (!article) return c.json({ errors: { article: ["not found"] } }, 404);
+  const parsed = createSchema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json(validationErrors(parsed.error), 422);
+  const user = c.get("user");
+  const row = addComment(db, article.id, user.id, parsed.data.comment.body);
+  return c.json({ comment: commentResponse(db, row, user, user) }, 201);
 });
 
-commentsRoutes.delete("/:slug/comments/:id", (c) => {
+commentProtectedRoutes.delete("/api/articles/:slug/comments/:id", requireAuth, (c) => {
   const db = c.get("db");
-  const auth = authenticate(db, c.req.header("Authorization"));
-  if ("error" in auth) return fail(c, 401, "token", authErrorMessage(auth.error));
-  const article = getArticleBySlug(db, c.req.param("slug"));
-  if (!article) return fail(c, 404, "article", "not found");
+  const article = findArticleBySlug(db, c.req.param("slug"));
+  if (!article) return c.json({ errors: { article: ["not found"] } }, 404);
   const id = Number(c.req.param("id"));
-  const comment = Number.isInteger(id) ? findCommentById(db, id) : null;
-  if (!comment || comment.article_id !== article.id) return fail(c, 404, "comment", "not found");
-  if (comment.author_id !== auth.user.id) return fail(c, 403, "comment", "forbidden");
-  deleteComment(db, comment);
+  const comment = Number.isInteger(id) ? findCommentById(db, id) : undefined;
+  if (!comment || comment.article_id !== article.id) {
+    return c.json({ errors: { comment: ["not found"] } }, 404);
+  }
+  if (comment.author_id !== c.get("user").id) {
+    return c.json({ errors: { comment: ["forbidden"] } }, 403);
+  }
+  deleteComment(db, comment.id);
   return c.body(null, 204);
 });

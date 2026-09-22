@@ -18,7 +18,7 @@ command -v hurl >/dev/null || { echo "hurl is not installed (brew install hurl)"
 pnpm build >/dev/null
 PORT="${PORT:-3100}"
 TMP="$(mktemp -d)"; trap '{ kill "$SERVER_PID" 2>/dev/null && wait "$SERVER_PID" 2>/dev/null; } || true; rm -rf "$TMP"' EXIT
-PORT="$PORT" DATABASE_PATH="$TMP/test.db" node dist/index.js >"$TMP/server.log" 2>&1 &
+PORT="$PORT" DATABASE_PATH="$TMP/test.db" JWT_SECRET="${JWT_SECRET:-test-secret}" node dist/index.js >"$TMP/server.log" 2>&1 &
 SERVER_PID=$!
 for _ in $(seq 1 50); do
   curl -sf "http://localhost:$PORT/api/health" >/dev/null && break
