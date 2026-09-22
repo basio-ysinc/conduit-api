@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { Db } from "../db/index.js";
+import { favoritesCount, isFavorited } from "./favorites.js";
 import type { UserRow } from "./users.js";
 
 export type ArticleRow = {
@@ -96,6 +97,7 @@ export function deleteArticle(db: Db, id: number): void {
 export type ListArticlesQuery = {
   tag?: string;
   author?: string;
+  favorited?: string;
   limit: number;
   offset: number;
 };
@@ -117,6 +119,12 @@ export function listArticles(
     );
     params.push(query.tag);
   }
+  if (query.favorited !== undefined) {
+    where.push(
+      "EXISTS (SELECT 1 FROM favorites f JOIN users fu ON fu.id = f.user_id WHERE f.article_id = a.id AND fu.username = ?)",
+    );
+    params.push(query.favorited);
+  }
   const cond = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
   const from = "FROM articles a JOIN users u ON u.id = a.author_id";
   const count = (db.prepare(`SELECT COUNT(*) AS c ${from} ${cond}`).get(...params) as { c: number })
@@ -124,6 +132,32 @@ export function listArticles(
   const rows = db
     .prepare(`SELECT a.* ${from} ${cond} ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?`)
     .all(...params, query.limit, query.offset) as ArticleRow[];
+  return { rows, count };
+}
+
+// follows テーブルは A2(profiles)のチケットが持つ。未マージの間はフォロー関係が
+// 存在し得ないため、テーブルが無い場合は空を返す(実クエリと結果は同じ)。
+function hasFollowsTable(db: Db): boolean {
+  return (
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'follows'").get() !==
+    undefined
+  );
+}
+
+/** フォロー中ユーザーの記事を作成日時の降順で返す。count は limit/offset 適用前の総件数。 */
+export function listFeed(
+  db: Db,
+  userId: number,
+  query: { limit: number; offset: number },
+): { rows: ArticleRow[]; count: number } {
+  if (!hasFollowsTable(db)) return { rows: [], count: 0 };
+  const from =
+    "FROM articles a JOIN users u ON u.id = a.author_id JOIN follows f ON f.followee_id = a.author_id";
+  const cond = "WHERE f.follower_id = ?";
+  const count = (db.prepare(`SELECT COUNT(*) AS c ${from} ${cond}`).get(userId) as { c: number }).c;
+  const rows = db
+    .prepare(`SELECT a.* ${from} ${cond} ORDER BY a.created_at DESC, a.id DESC LIMIT ? OFFSET ?`)
+    .all(userId, query.limit, query.offset) as ArticleRow[];
   return { rows, count };
 }
 
@@ -165,14 +199,14 @@ function profileResponse(author: UserRow): Profile {
 }
 
 /**
- * 記事の JSON 表現。favorited / favoritesCount は A6 までは常に false / 0。
+ * 記事の JSON 表現。favorited は viewer(閲覧ユーザー)基準、未認証なら false。
  * 一覧では body を含めない(openapi.yml MultipleArticlesResponse)。
  */
 export function articleResponse(
   db: Db,
   row: ArticleRow,
   author: UserRow,
-  { includeBody }: { includeBody: boolean },
+  { includeBody, viewer }: { includeBody: boolean; viewer?: UserRow },
 ) {
   return {
     slug: row.slug,
@@ -182,8 +216,8 @@ export function articleResponse(
     tagList: tagNames(db, row.id),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    favorited: false,
-    favoritesCount: 0,
+    favorited: viewer !== undefined && isFavorited(db, viewer.id, row.id),
+    favoritesCount: favoritesCount(db, row.id),
     author: profileResponse(author),
   };
 }

@@ -3,3 +3,5 @@
 auth.hurl
 errors_auth.hurl
 articles.hurl
+favorites.hurl
+errors_articles.hurl
