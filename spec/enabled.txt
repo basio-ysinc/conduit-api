@@ -7,6 +7,7 @@ favorites.hurl
 errors_articles.hurl
 profiles.hurl
 errors_profiles.hurl
+tags.hurl
 pagination.hurl
 comments.hurl
 errors_comments.hurl
