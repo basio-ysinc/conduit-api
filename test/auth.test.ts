@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { issueToken, verifyToken } from "../src/auth/jwt.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { issueToken, resolveJwtSecret, verifyToken } from "../src/auth/jwt.js";
 import { hashPassword, verifyPassword } from "../src/auth/passwords.js";
 
 describe("hashPassword / verifyPassword", () => {
@@ -46,5 +46,31 @@ describe("issueToken / verifyToken", () => {
   it("形式不正なトークンを拒否する", async () => {
     expect(await verifyToken("not-a-jwt", secret)).toBeNull();
     expect(await verifyToken("aaa.bbb.ccc", secret)).toBeNull();
+  });
+});
+
+describe("resolveJwtSecret", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("JWT_SECRET が設定されていればそれを返す", () => {
+    vi.stubEnv("JWT_SECRET", "env-secret");
+    vi.stubEnv("NODE_ENV", "production");
+    expect(resolveJwtSecret()).toBe("env-secret");
+  });
+
+  it("production で JWT_SECRET 未設定なら例外を投げる", () => {
+    vi.stubEnv("JWT_SECRET", "");
+    vi.stubEnv("NODE_ENV", "production");
+    expect(() => resolveJwtSecret()).toThrow("JWT_SECRET");
+  });
+
+  it("production 以外で未設定ならプロセス内で固定のランダム鍵にフォールバックする", () => {
+    vi.stubEnv("JWT_SECRET", "");
+    vi.stubEnv("NODE_ENV", "test");
+    const secret = resolveJwtSecret();
+    expect(secret).toMatch(/^[0-9a-f]{64}$/);
+    expect(resolveJwtSecret()).toBe(secret);
   });
 });
