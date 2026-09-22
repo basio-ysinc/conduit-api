@@ -2,7 +2,10 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypt
 import type { Db } from "./db/index.js";
 import { type UserRow, findUserById } from "./services/users.js";
 
-// 鍵は JWT_SECRET から読む。未設定ならプロセス起動ごとにランダム生成(開発・テスト用)。
+// 鍵は JWT_SECRET から読む。production で未設定なら起動時に失敗させ、開発・テストのみランダム生成にフォールバックする。
+if (!process.env.JWT_SECRET && process.env.NODE_ENV === "production") {
+  throw new Error("JWT_SECRET must be set when NODE_ENV=production");
+}
 const secret = process.env.JWT_SECRET ?? randomBytes(32).toString("hex");
 const TOKEN_TTL_SEC = 7 * 24 * 60 * 60;
 
