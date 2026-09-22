@@ -1,2 +1,3 @@
 # main で必ず通る hurl ファイルの一覧。1 行 1 ファイル。チケットで対応した hurl ファイルをここに追加する。
 # 例: auth.hurl
+pagination.hurl
