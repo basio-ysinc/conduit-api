@@ -27,3 +27,9 @@ pnpm test                     # vitest
 pnpm test:api [file.hurl ...] # サーバを一時 DB で起動して hurl
 pnpm verify
 ```
+
+## 環境変数
+
+- `JWT_SECRET`: JWT の署名鍵(decisions.md TBD-4)。`NODE_ENV=production` では必須で、未設定だと起動時にエラーになる。開発・テストでは未設定なら起動ごとにランダム生成される
+- `PORT`: listen ポート(既定 3000)
+- `DATABASE_PATH`: SQLite のファイルパス(既定 `./data/conduit.db`)
