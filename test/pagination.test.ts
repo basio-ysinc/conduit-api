@@ -26,13 +26,13 @@ describe("parsePagination", () => {
     });
   });
 
-  it.each(["0", "-1", "abc", "1.5", ""])("rejects limit=%s", (limit) => {
+  it.each(["0", "-1", "abc", "1.5", "", "99999999999999999999"])("rejects limit=%s", (limit) => {
     const res = parsePagination({ limit });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.errors.limit).toBeDefined();
   });
 
-  it.each(["-1", "abc", "1.5", ""])("rejects offset=%s", (offset) => {
+  it.each(["-1", "abc", "1.5", "", "99999999999999999999"])("rejects offset=%s", (offset) => {
     const res = parsePagination({ offset });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.errors.offset).toBeDefined();
@@ -85,7 +85,7 @@ describe("GET /api/articles pagination", () => {
 
   it("returns 422 for invalid limit/offset", async () => {
     const app = createApp(openDatabase(":memory:"));
-    for (const q of ["limit=0", "limit=abc", "offset=-1"]) {
+    for (const q of ["limit=0", "limit=abc", "offset=-1", "offset=99999999999999999999"]) {
       const res = await app.request(`/api/articles?${q}`);
       expect(res.status).toBe(422);
       expect(await res.json()).toMatchObject({ errors: expect.any(Object) });
